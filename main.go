@@ -1,48 +1,84 @@
 package main
 
 import (
+	"crudapi/middleware"
 	"encoding/json"
-	"io"
-	"log"
+	"fmt"
 	"net/http"
-	"os"
 
 	"github.com/gorilla/mux"
 )
 
-func main() {
-	os.MkdirAll("uploads", os.ModePerm)
-
-	r := mux.NewRouter()
-	r.HandleFunc("/upload", uploadFile).Methods("POST")
-
-	// 🔥 Serve files at http://localhost:8080/uploads/filename.png
-	r.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads"))))
-
-	log.Println("🚀 Server started at :8080")
-	http.ListenAndServe(":8080", r)
+type User struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
-func uploadFile(w http.ResponseWriter, r *http.Request) {
-	r.ParseMultipartForm(10 << 20) // max 10MB
+var users []User
 
-	file, handler, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "Error retrieving file", http.StatusBadRequest)
-		return
+func main() {
+	r := mux.NewRouter()
+	users = append(users, User{ID: "1,", Name: "Jitendra", Email: "jitendra@gmail.com"})
+	r.Handle("/users", middleware.JWTAuthMiddleware(http.HandlerFunc((getUsers)))).Methods("GET")
+	r.HandleFunc("/users/{id}", getUser).Methods("GET")
+	r.HandleFunc("/users", createUser).Methods("POST")
+	r.HandleFunc("/users/{id}", updateUser).Methods("PUT")
+	r.HandleFunc("/users/{id}", deleteUser).Methods("DELETE")
+
+	fmt.Println("Server started at :8080")
+	http.ListenAndServe(":8080", r)
+
+}
+
+func getUsers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(users)
+}
+
+func getUser(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+
+	for _, u := range users {
+		if u.ID == params["id"] {
+			json.NewEncoder(w).Encode(u)
+			return
+		}
+
 	}
-	defer file.Close()
+	http.Error(w, "User not found", http.StatusNotFound)
+}
 
-	f, err := os.Create("uploads/" + handler.Filename)
-	if err != nil {
-		http.Error(w, "Unable to create file", http.StatusInternalServerError)
-		return
+func createUser(w http.ResponseWriter, r *http.Request) {
+	var user User
+
+	json.NewDecoder(r.Body).Decode(&user)
+	users = append(users, user)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(user)
+}
+
+func updateUser(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	for i, u := range users {
+		if u.ID == params["id"] {
+			json.NewDecoder(r.Body).Decode(&users[i])
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(users[i])
+			return
+		}
 	}
-	defer f.Close()
+	http.Error(w, "User not found", http.StatusNotFound)
+}
 
-	io.Copy(f, file)
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":  "Uploaded successfully!",
-		"filename": handler.Filename,
-	})
+func deleteUser(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	for i, u := range users {
+		if u.ID == params["id"] {
+			users = append(users[:i], users[i+1:]...)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	http.Error(w, "User not found", http.StatusNotFound)
 }
